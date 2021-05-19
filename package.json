@@ -1,0 +1,48 @@
+{
+  "name": "markdown-pipeline",
+  "version": "1.0.0",
+  "description": "Simple markdown file processing pipeline",
+  "main": "index.js",
+  "bin": "bin/markdown-pipeline",
+  "typings": "dist/index.d.ts",
+  "files": [
+    "index.js",
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run build",
+    "prebuild": "npm run clean",
+    "build": "tsc -p src"
+  },
+  "prettier": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jcormont/markdown-pipeline.git"
+  },
+  "keywords": [
+    "markdown",
+    "html",
+    "documentation",
+    "generator"
+  ],
+  "author": "Jelmer Cormont",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/jcormont/markdown-pipeline/issues"
+  },
+  "homepage": "https://github.com/jcormont/markdown-pipeline#readme",
+  "dependencies": {
+    "highlight.js": "^10.7.2",
+    "js-yaml": "^4.1.0",
+    "marked": "^2.0.3"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.1",
+    "@types/marked": "^2.0.2",
+    "@types/node": "^15.3.0",
+    "rimraf": "^3.0.2",
+    "typescript": "*"
+  }
+}
