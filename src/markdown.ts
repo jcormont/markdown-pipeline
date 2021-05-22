@@ -80,7 +80,9 @@ export async function parseMarkdownAsync(
         return "";
       });
       text = marked.parseInline(text, options);
-      return `<h${level}${props}>${text}</h${level}>`;
+
+      // also add an extra newline to allow text to follow immediately after
+      return `<h${level}${props}>${text}</h${level}>\n`;
     });
 
   /** Helper function that transforms links with tags to HTML */

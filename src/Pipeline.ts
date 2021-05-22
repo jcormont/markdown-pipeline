@@ -12,15 +12,15 @@ export interface PipelineAsset {
   /** The input file path */
   readonly input: string;
 
-  /** The output file path */
+  /** The output file path (relative to the destination base dir) */
   readonly output: string;
 }
 
 export interface PipelineOutput {
-  /** The relative output file path (including base dir) */
+  /** The output file path (relative to the destination base dir) */
   readonly path: string;
 
-  /** Output file data, will be written to the file directly */
+  /** Output file data, to be written to the file */
   readonly data?: string;
 }
 
@@ -28,8 +28,9 @@ export interface PipelineOutput {
 async function transform(item: Pipeline.Item, pipeline: Pipeline) {
   if (item.markdown.length) {
     let fileName =
+      item.data.output ||
       path.join(pipeline.outputPath, path.relative(pipeline.path, item.path)) +
-      ".html";
+        ".html";
     item.output.push({
       path: fileName,
       data: await pipeline.parseAsync(item.markdown),
@@ -72,7 +73,7 @@ export class Pipeline {
   /** Path, relative to the current environment directory */
   readonly path: string;
 
-  /** Output path, relative to the current environment directory */
+  /** Output path, relative to the destination base directory */
   readonly outputPath: string;
 
   /** Parser options */
@@ -196,7 +197,11 @@ export namespace Pipeline {
     /** Markdown source (lines) */
     readonly markdown: string[];
 
-    /** Data object associated with this item; includes YAML front matter from the markdown source file */
+    /**
+     * Data object associated with this item; includes YAML front matter from the markdown source file, and may contain special properties:
+     * - `output`: the intended output path for this item (as a string, including file extension)
+     * - `warnings`: any warnings that will be shown after the pipeline has finished (an array of strings)
+     */
     data: any = {};
 
     /** List of assets that should be copied on disk along with this item */
