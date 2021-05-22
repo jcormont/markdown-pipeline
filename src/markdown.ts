@@ -59,49 +59,53 @@ export function splitMarkdown(text: string) {
 
 /** Parse given markdown text (lines), returns HTML text */
 export async function parseMarkdownAsync(
-  lines: string[],
+  text: string | string[],
   options: marked.MarkedOptions
 ) {
+  // enable syntax highlighting by default
   if (!options.highlight) {
     options.highlight = (code, lang) => {
       return hljs.highlight(code, { language: lang }).value;
     };
   }
-  return new Promise<string>((resolve, reject) =>
-    // use `marked` with given options, and transform headings and links
-    marked.parse(
-      lines
-        .map((s) =>
-          s
-            .replace(_heading_regex, (_s, prefix: string, text: string) => {
-              // found a heading, parse the tag at the end, if any
-              let level = prefix.length;
-              let props = "";
-              text = text.replace(/\s*\{[^\}]+\}\s*$/, (tag) => {
-                props = _propsForTag(tag);
-                return "";
-              });
-              text = marked.parse(text);
-              return `<h${level}${props}>${text}</h${level}>`;
-            })
-            .replace(
-              _link_regex,
-              (_s, text: string, href: string, tag: string) => {
-                // found a link, parse it, including the tag at the end
-                let props = "";
-                if (tag) props = _propsForTag(tag);
-                text = marked.parse(text);
-                return `<a href="${_h(href)}"${props}>${text}</a>`;
-              }
-            )
+
+  /** Helper function that transforms headings with tags to HTML */
+  const parseHeadings = (s: string) =>
+    s.replace(_heading_regex, (_s, prefix: string, text: string) => {
+      // found a heading, parse the tag at the end, if any
+      let level = prefix.length;
+      let props = "";
+      text = text.replace(/\s*\{[^\}]+\}\s*$/, (tag) => {
+        props = _propsForTag(tag);
+        return "";
+      });
+      text = marked.parseInline(text, options);
+      return `<h${level}${props}>${text}</h${level}>`;
+    });
+
+  /** Helper function that transforms links with tags to HTML */
+  const parseLinks = (s: string) =>
+    s.replace(_link_regex, (_s, text: string, href: string, tag: string) => {
+      // found a link, parse it, including the tag at the end
+      let props = "";
+      if (tag) props = _propsForTag(tag);
+      text = marked.parseInline(text, options);
+      return `<a href="${_h(href)}"${props}>${text}</a>`;
+    });
+
+  // use `marked` with given options, and transform headings and links
+  return !Array.isArray(text)
+    ? marked.parseInline(parseLinks(parseHeadings(text as string)), options)
+    : new Promise<string>((resolve, reject) =>
+        marked.parse(
+          (text as string[])
+            .map((s) => parseLinks(parseHeadings(s)))
+            .join("\n"),
+          options,
+          (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          }
         )
-        .join("\n"),
-      options,
-      (err, result) => {
-        // callback: fulfill promise
-        if (err) reject(err);
-        else resolve(result);
-      }
-    )
-  );
+      );
 }

@@ -24,27 +24,30 @@ export interface PipelineOutput {
   readonly data?: string;
 }
 
+/** Pipeline core function, renders a markdown file to HTML */
+async function transform(item: Pipeline.Item, pipeline: Pipeline) {
+  if (item.markdown.length) {
+    let fileName =
+      path.join(pipeline.outputPath, path.relative(pipeline.path, item.path)) +
+      ".html";
+    item.output.push({
+      path: fileName,
+      data: await pipeline.parseAsync(item.markdown),
+    });
+  }
+}
+
 /** Represents a pipeline that processes markdown files */
 export class Pipeline {
   /** Create a new pipeline; do NOT use directly, use `spawn()` instead */
   constructor(inputPath: string, outputPath: string) {
     this.path = inputPath;
     this.outputPath = outputPath;
-    this._f = async (item) => {
-      // this is the core of the pipeline: render a markdown file to HTML
-      if (item.markdown.length) {
-        let fileName =
-          path.join(outputPath, path.relative(this.path, item.path)) + ".html";
-        item.output.push({
-          path: fileName,
-          data: await this.parseAsync(item.markdown),
-        });
-      }
-    };
+    this._f = transform;
   }
 
-  /** Parses given markdown text (an array of strings, one for each line) and returns corresponding HTML */
-  async parseAsync(markdown: string[]) {
+  /** Parses given markdown text (an array of strings, one for each line; or a single string for inline markdown) and returns corresponding HTML */
+  async parseAsync(markdown: string | string[]) {
     return await parseMarkdownAsync(markdown, this.parserOptions);
   }
 
@@ -62,7 +65,8 @@ export class Pipeline {
     ) => void | Promise<void>
   ) {
     let next = this._f;
-    this._f = (item) => f(item, () => next(item), this) || Promise.resolve();
+    this._f = (item, pipeline) =>
+      f(item, () => next(item, pipeline), pipeline) || Promise.resolve();
   }
 
   /** Path, relative to the current environment directory */
@@ -95,7 +99,7 @@ export class Pipeline {
   add(item: Pipeline.Item) {
     this._items.push(item);
     this._allItems.push(item);
-    this._run.push(this._pre.then(() => this._f(item)));
+    this._run.push(this._pre.then(() => this._f(item, this)));
     return this;
   }
 
@@ -140,6 +144,7 @@ export class Pipeline {
       : this.path;
     outputPath = path.join(this.outputPath, outputPath || relativePath || ".");
     let result = new Pipeline(targetPath, outputPath);
+    result._f = this._f;
     result._allItems = this._allItems;
     this._run.push(this._pre.then(() => result.promise()));
     return result;
@@ -160,7 +165,7 @@ export class Pipeline {
     this._startWait = r;
   });
 
-  private _f: (item: Pipeline.Item) => Promise<void>;
+  private _f: (item: Pipeline.Item, pipeline: Pipeline) => Promise<void>;
   private _items: Pipeline.Item[] = [];
   private _allItems: Pipeline.Item[] = [];
   private _run: Array<Promise<void>> = [];
