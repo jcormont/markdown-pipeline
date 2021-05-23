@@ -96,11 +96,13 @@ export class Pipeline {
     }
   }
 
-  /** Add an item to this pipeline; starts running its transformation asynchronously */
-  add(item: Pipeline.Item) {
-    this._items.push(item);
-    this._allItems.push(item);
-    this._run.push(this._pre.then(() => this._f(item, this)));
+  /** Add one or more items to this pipeline */
+  add(...items: Pipeline.Item[]) {
+    this._items.push(...items);
+    this._allItems.push(...items);
+    this._run.push(
+      ...items.map((it) => this._pre.then(() => this._f(it, this)))
+    );
     return this;
   }
 
@@ -116,6 +118,17 @@ export class Pipeline {
     );
     this.add(item);
     return this;
+  }
+
+  /** Read one or more markdown files from given (relative) file names and add them to this pipeline; note that the file names specified are relative to the path of this pipeline, however the `path` property of the created item is relative to the root pipeline. */
+  addFiles(...fileNames: string[]) {
+    for (let fileName of fileNames) this.addFile(fileName);
+    return this;
+  }
+
+  /** Add an asset to this pipeline, for given (relative) file name; uses an anonymous pipeline item without markdown content */
+  addAsset(asset: string | PipelineAsset) {
+    return this.addAssets(asset);
   }
 
   /** Add one or more assets to this pipeline, for given (relative) file names; uses an anonymous pipeline item without markdown content */
