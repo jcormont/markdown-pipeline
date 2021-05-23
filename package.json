@@ -1,6 +1,6 @@
 {
   "name": "markdown-pipeline",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Simple markdown file processing pipeline",
   "main": "index.js",
   "bin": "bin/markdown-pipeline",
