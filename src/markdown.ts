@@ -12,7 +12,7 @@ function _propsForTag(tag: string) {
   let classNames: string[] = [];
   let props = "";
   tag.replace(
-    /(?:\#([-\w]+))|(?:\.([-\w]+))|(\w+=\"[^\"\}]*\")/g,
+    /(?:\#([^\s\.}]+))|(?:\.([^\s\.}]+))|(\w+=\"[^\"\}]*\")/g,
     (_s, id, className, propSpec) => {
       if (id) props += ` id="${id.replace(/\\(.)/g, "$1")}"`;
       if (className) classNames.push(className.replace(/\\(.)/g, "$1"));
