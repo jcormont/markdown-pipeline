@@ -65,6 +65,7 @@ export async function parseMarkdownAsync(
   // enable syntax highlighting by default
   if (!options.highlight) {
     options.highlight = (code, lang) => {
+      if (!lang || !code) return code;
       return hljs.highlight(code, { language: lang }).value;
     };
   }
