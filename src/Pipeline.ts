@@ -158,6 +158,7 @@ export class Pipeline {
       : this.path;
     outputPath = path.join(this.outputPath, outputPath || relativePath || ".");
     let result = new Pipeline(targetPath, outputPath);
+    Object.assign(result.parserOptions, this.parserOptions);
     result._f = this._f;
     result._allItems = this._allItems;
     this._run.push(this._pre.then(() => result.promise()));
