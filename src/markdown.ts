@@ -26,7 +26,7 @@ function _propsForTag(tag: string) {
 }
 
 /** HTML-escape */
-export function _h(s: string) {
+export function _h(s = "") {
   return s
     .replace(/\&/g, "&amp;")
     .replace(/\"/g, "&quot;")
