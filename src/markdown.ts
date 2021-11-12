@@ -2,7 +2,28 @@ import * as yaml from "js-yaml";
 import * as marked from "marked";
 import * as hljs from "highlight.js";
 
-export type ParserOptions = marked.MarkedOptions;
+// avoid dependency on @types/marked here, by copying options interface:
+/** Parser options, same as `marked.MarkedOptions` */
+export interface ParserOptions {
+  baseUrl?: string;
+  breaks?: boolean;
+  gfm?: boolean;
+  headerIds?: boolean;
+  headerPrefix?: string;
+  langPrefix?: string;
+  mangle?: boolean;
+  pedantic?: boolean;
+  sanitize?: boolean;
+  silent?: boolean;
+  smartLists?: boolean;
+  smartypants?: boolean;
+  xhtml?: boolean;
+  highlight?(
+    code: string,
+    lang: string,
+    callback?: (error: any | undefined, code?: string) => void
+  ): string | void;
+}
 
 const _heading_regex = /^(#+)\s+(.*)$/;
 const _link_regex = /\[([^\]]+)\]\(([^\)]+)\)(?:(\{[^\}]*\}))?/g;
