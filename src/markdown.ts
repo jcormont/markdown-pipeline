@@ -81,7 +81,7 @@ export function splitMarkdown(text: string) {
 /** Parse given markdown text (lines), returns HTML text */
 export async function parseMarkdownAsync(
   text: string | string[],
-  options: marked.MarkedOptions
+  options: ParserOptions
 ) {
   // enable syntax highlighting by default
   if (!options.highlight) {
