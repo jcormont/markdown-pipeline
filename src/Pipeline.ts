@@ -1,227 +1,361 @@
 import * as path from "path";
-import { readTextFile } from "./files";
 import {
-  ParserOptions,
-  parseMarkdownAsync,
-  splitMarkdown,
-  _h,
+	ParserOptions,
+	parseMarkdownAsync,
+	splitMarkdown,
+	parseHtmlAttrTags as replaceHtmlAttrTags,
 } from "./markdown";
+import { FileCache } from "./FileCache";
+import { PipelineAsset, PipelineItem } from "./PipelineItem";
+import { decode, encode } from "html-entities";
 
-/** Represents an asset file that should be copied as-is */
-export interface PipelineAsset {
-  /** The input file path */
-  readonly input: string;
+let _nextAssetId = 1;
+let _nextImportId = 1;
 
-  /** The output file path (relative to the destination base dir) */
-  readonly output: string;
-}
+/** Type definition for a pipeline transform function */
+export type PipelineTransform = (
+	item: PipelineItem,
+	next: () => Promise<void>
+) => void | Promise<void>;
 
-export interface PipelineOutput {
-  /** The output file path (relative to the destination base dir) */
-  readonly path: string;
-
-  /** Output file data, to be written to the file */
-  readonly data?: string;
-}
-
-/** Pipeline core function, renders a markdown file to HTML */
-async function transform(item: Pipeline.Item, pipeline: Pipeline) {
-  if (item.markdown.length) {
-    let fileName =
-      item.data.output ||
-      path.join(pipeline.outputPath, path.relative(pipeline.path, item.path)) +
-        ".html";
-    item.output.push({
-      path: fileName,
-      data: await pipeline.parseAsync(item.markdown),
-    });
-  }
-}
-
-/** Represents a pipeline that processes markdown files */
+/**
+ * A representation of a Markdown processing pipeline, which processes markdown files and assets using a set of transform functions.
+ */
 export class Pipeline {
-  /** Create a new pipeline; do NOT use directly, use `spawn()` instead */
-  constructor(inputPath: string, outputPath: string) {
-    this.path = inputPath;
-    this.outputPath = outputPath;
-    this._f = transform;
-  }
+	/**
+	 * Creates a new pipeline.
+	 * @note Do NOT use this constructor directly, use `spawn()` instead.
+	 */
+	constructor(inputPath: string, outputPath: string) {
+		this.path = inputPath;
+		this.outputPath = outputPath;
+		this._files = new FileCache();
+	}
 
-  /** Parses given markdown text (an array of strings, one for each line; or a single string for inline markdown) and returns corresponding HTML */
-  async parseAsync(markdown: string | string[]) {
-    return await parseMarkdownAsync(markdown, this.parserOptions);
-  }
+	/** The input path, relative to the current environment directory */
+	readonly path: string;
 
-  /** Escape HTML (minimal) */
-  escapeHTML(s: string) {
-    return _h(s);
-  }
+	/** The output path, relative to the destination base directory */
+	readonly outputPath: string;
 
-  /** Adds a transform function to this pipeline (and all pipelines spawned from this pipeline afterwards); only takes effect for items added _after_ this call */
-  addTransform(
-    f: (
-      item: Pipeline.Item,
-      next: () => Promise<void>,
-      pipeline: Pipeline
-    ) => void | Promise<void>
-  ) {
-    let next = this._f;
-    this._f = (item, pipeline) =>
-      f(item, () => next(item, pipeline), pipeline) || Promise.resolve();
-  }
+	/** Parser options that are used when converting markdown to HTML */
+	readonly parserOptions: ParserOptions = {};
 
-  /** Path, relative to the current environment directory */
-  readonly path: string;
+	/**
+	 * Returns a list of all items that have been added to this pipeline **only**.
+	 */
+	getItems() {
+		return this._items.slice();
+	}
 
-  /** Output path, relative to the destination base directory */
-  readonly outputPath: string;
+	/**
+	 * Returns a list of **all** items that have been added to all related pipelines, including parent(s), siblings, and spawned pipelines.
+	 */
+	getAllItems(): PipelineItem[] {
+		return Array.from(this._allItems.values());
+	}
 
-  /** Parser options */
-  readonly parserOptions: ParserOptions = {};
+	/**
+	 * Finds an existing pipeline item with given path, from any of the related pipelines (including parents, siblings, and spawned pipelines)
+	 * @note The item path for markdown files does NOT include the `.md` or `.txt` extension.
+	 * @param itemPath The item path to look for, relative to the _root_ pipeline
+	 * @returns A single pipeline item
+	 */
+	find(itemPath: string): PipelineItem | undefined {
+		return this._allItems.get(itemPath);
+	}
 
-  /** Returns a list of all items that have been added to this pipeline **only** */
-  getItems() {
-    return this._items.slice();
-  }
+	/**
+	 * Parses given markdown text and returns a promise for the corresponding HTML.
+	 * @param markdown The markdown text; either as an array of strings, one for each line; or as a single string for inline markdown
+	 * @returns A promise for the HTML output string
+	 */
+	async parseAsync(markdown: string | string[]) {
+		return await parseMarkdownAsync(markdown, this.parserOptions);
+	}
 
-  /** Returns a list of all items that have been added to all related pipelines, including parent(s), siblings, and spawned pipelines */
-  getAllItems(): Pipeline.Item[] {
-    return this._allItems.slice();
-  }
+	/** A helper method that returns HTML-escaped text. */
+	escapeHtml(s: string) {
+		return encode(s || "");
+	}
 
-  /** Find the first item with given path (excluding `.md` extension) that has been added to all related pipelines, including parent(s), siblings, and spawned pipelines */
-  find(itemPath: string): Pipeline.Item | undefined {
-    for (let item of this._allItems) {
-      if (item.path === itemPath) return item;
-    }
-  }
+	/** A helper method that returns HTML-parsed text. */
+	unescapeHtml(s: string) {
+		return decode(s || "");
+	}
 
-  /** Add one or more items to this pipeline */
-  add(...items: Pipeline.Item[]) {
-    this._items.push(...items);
-    this._allItems.push(...items);
-    this._run.push(
-      ...items.map((it) => this._pre.then(() => this._f(it, this)))
-    );
-    return this;
-  }
+	/**
+	 * A helper method that loads the content of given text file asynchronously.
+	 * @param fileName The path of the file to read, relative to the current pipeline path
+	 */
+	async readTextFileAsync(fileName: string) {
+		return this._files.readTextFileAsync(path.resolve(this.path, fileName));
+	}
 
-  /** Read a markdown file from given (relative) file name and add it to this pipeline; note that the file name specified is relative to the path of this pipeline, however the `path` property of the created item is relative to the root pipeline. */
-  addFile(fileName: string) {
-    let text = readTextFile(path.resolve(this.path, fileName));
-    let { data, markdown, warnings } = splitMarkdown(text);
-    if (warnings?.length) data.warnings = warnings;
-    let item = new Pipeline.Item(
-      path.join(this.path, fileName.replace(/\.md$/, "")),
-      markdown,
-      data
-    );
-    this.add(item);
-    return this;
-  }
+	/**
+	 * Loads given JS module(s) and runs their exported 'start' function. The current pipeline is supplied as the function's only argument.
+	 * @param fileNames File names of one or more JavaScript source files to run, relative to the current pipeline path
+	 * @returns The pipeline itself
+	 */
+	addModule(...fileNames: string[]) {
+		for (let fileName of fileNames) {
+			try {
+				let start = require(path.resolve(this.path, fileName)).start;
+				if (!(typeof start === "function")) {
+					throw Error("Module should export function start(pipeline) { ... }");
+				}
+				start(this);
+			} catch (err) {
+				throw Error(
+					"In pipeline module " + path.join(this.path, fileName) + ":\n" + err
+				);
+			}
+		}
+		return this;
+	}
 
-  /** Read one or more markdown files from given (relative) file names and add them to this pipeline; note that the file names specified are relative to the path of this pipeline, however the `path` property of the created item is relative to the root pipeline. */
-  addFiles(...fileNames: string[]) {
-    for (let fileName of fileNames) this.addFile(fileName);
-    return this;
-  }
+	/**
+	 * Adds transform function(s) to this pipeline (and all pipelines spawned from this pipeline afterwards).
+	 * @note The transform function only takes effect for items added _after_ this call.
+	 * @param transforms One or more transform functions
+	 * @returns The pipeline itself
+	 */
+	addTransform(...transforms: Array<PipelineTransform>) {
+		this._transforms.push(...transforms);
+		return this;
+	}
 
-  /** Add an asset to this pipeline, for given (relative) file name; uses an anonymous pipeline item without markdown content */
-  addAsset(asset: string | PipelineAsset) {
-    return this.addAssets(asset);
-  }
+	/**
+	 * Reads one or more markdown files and adds them to this pipeline (synchronously)
+	 *
+	 * Markdown files may include YAML front matter, which is used to set the `data` property of the pipeline item. The following properties are handled by the pipeline itself:
+	 * - `require` -- A file name (relative to the file itself) or list of file names that will be added to the pipeline
+	 * - `assets` -- A list of file names (relative to the file itself) or objects with input/output properties (relative to the *root* pipeline path) that are added as assets for this pipeline item
+	 * - `output` -- The output file name (relative to the current pipeline output path), including extension; if not set, the output path is based on the original item path, with HTML extension
+	 * - `inactive` -- If true, no HTML output will be generated, and assets will not be copied
+	 * - `partial` -- If true, HTML output will still be generated, but not saved (output path is cleared)
+	 * - `warnings` -- A list of warnings (strings) that will be shown after the pipeline has finished
+	 * @param fileNames One or more file names, relative to the pipeline path
+	 * @returns The pipeline itself
+	 */
+	addFile(...fileNames: string[]) {
+		for (let fileName of fileNames) {
+			let filePath = path.resolve(this.path, fileName);
+			fileName = fileName.replace(/\.md$|\.txt$/, "");
 
-  /** Add one or more assets to this pipeline, for given (relative) file names; uses an anonymous pipeline item without markdown content */
-  addAssets(...assets: (string | PipelineAsset)[]) {
-    this.add(
-      new Pipeline.Item(
-        "@asset",
-        undefined,
-        undefined,
-        assets.map((a) =>
-          typeof a === "string"
-            ? {
-                input: path.join(this.path, a),
-                output: path.join(this.outputPath, a),
-              }
-            : a
-        )
-      )
-    );
-    return this;
-  }
+			// if not added yet, read file and add item
+			let id = path.join(this.path, fileName);
+			if (this._allItems.has(id)) continue;
+			let text = this._files.readTextFile(filePath);
+			this.addSource(fileName, text);
+		}
+		return this;
+	}
 
-  /** Create a new pipeline, optionally using given paths (relative to the path of this pipeline); the spawned pipeline inherits all current transforms, and the current pipeline will wait for the completion of all items added to the spawned pipeline */
-  spawn(relativePath?: string, outputPath?: string) {
-    let targetPath = relativePath
-      ? path.join(this.path, relativePath)
-      : this.path;
-    outputPath = path.join(this.outputPath, outputPath || relativePath || ".");
-    let result = new Pipeline(targetPath, outputPath);
-    Object.assign(result.parserOptions, this.parserOptions);
-    result._f = this._f;
-    result._allItems = this._allItems;
-    this._run.push(this._pre.then(() => result.promise()));
-    return result;
-  }
+	/**
+	 * Adds given markdown text to the pipeline, from memory instead of a file.
+	 *
+	 * Markdown text may include YAML front matter; refer to {@link addFile()} for a list of special properties.
+	 * @param id The 'path' of the item that is added to the pipeline, relative to the current pipeline input path; does not need to exist as a file
+	 * @param text Markdown text, may include YAML front matter
+	 * @param itemData Pipeline item data, overrides properties from front matter
+	 * @param assets List of assets that should be included in the output on behalf of this item
+	 * @returns The newly added pipeline item
+	 */
+	addSource(
+		id: string,
+		text: string,
+		itemData: any = {},
+		assets: PipelineAsset[] = []
+	) {
+		let itemPath = path.join(this.path, id);
+		if (this._allItems.has(itemPath)) {
+			throw Error("Item already exists in pipeline: " + itemPath);
+		}
 
-  /** Start processing all items, and wait */
-  async promise() {
-    this._startWait();
-    let len = 0;
-    while (this._run.length > len) {
-      len = this._run.length;
-      await Promise.all(this._run);
-    }
-  }
+		// split markdown and YAML front matter
+		// note that most data properties are handled elsewhere
+		let { data, markdown, warnings } = splitMarkdown(text);
+		if (warnings?.length) data.warnings = warnings;
+		data = { ...itemData, ...data };
 
-  private _startWait!: () => void;
-  private _pre = new Promise<void>((r) => {
-    this._startWait = r;
-  });
+		// add pipeline item
+		let promise: Promise<void> = this._startP.then(() => this._transform(item));
+		let item = new PipelineItem(
+			this,
+			itemPath,
+			markdown,
+			data,
+			assets,
+			promise
+		);
+		this._items.push(item);
+		this._allItems.set(item.path, item);
+		this._run.push(promise);
+		return item;
+	}
 
-  private _f: (item: Pipeline.Item, pipeline: Pipeline) => Promise<void>;
-  private _items: Pipeline.Item[] = [];
-  private _allItems: Pipeline.Item[] = [];
-  private _run: Array<Promise<void>> = [];
-}
+	/**
+	 * Add one or more assets to this pipeline, by themselves.
+	 * @param assets List of assets to be added, either as strings (relative to the current pipeline path) or objects with input/output properties (relative to the *root* pipeline path)
+	 * @returns The pipeline itself
+	 */
+	addAsset(...assets: (string | PipelineAsset)[]) {
+		let item = new PipelineItem(
+			this,
+			"@asset:" + _nextAssetId++,
+			undefined,
+			undefined,
+			assets.map((a) =>
+				typeof a === "string"
+					? {
+							input: path.join(this.path, a),
+							output: path.join(this.outputPath, a),
+					  }
+					: a
+			)
+		);
+		this._items.push(item);
+		this._allItems.set(item.path, item);
+		return this;
+	}
 
-export namespace Pipeline {
-  /** Represents an input item and its associated assets and data, if any */
-  export class Item {
-    constructor(
-      path: string,
-      markdown: string[] = [],
-      data?: any,
-      assets?: PipelineAsset[]
-    ) {
-      if (!path) throw RangeError();
-      this.path = path;
-      this.markdown = markdown;
-      if (data) Object.assign(this.data, data);
-      if (assets) this.assets.push(...assets);
-    }
+	/**
+	 * Creates a new pipeline, optionally using new path(s). The spawned pipeline inherits all current transforms, but not those that are added *after* calling this method.
+	 * @param relativePath Input path, relative to the current pipeline path; if omitted, the new path will be the same as the current path
+	 * @param outputPath Output path, relative to the current output path; if omitted, `relativePath` is used, or if both are omitted, the new output path will be the same as the current output path
+	 * @returns The newly created pipeline
+	 */
+	spawn(relativePath?: string, outputPath?: string) {
+		let targetPath = relativePath
+			? path.join(this.path, relativePath)
+			: this.path;
+		outputPath = path.join(this.outputPath, outputPath || relativePath || ".");
 
-    /** Set to true if all output for this item should be ignored */
-    inactive?: boolean;
+		// create new pipeline with given paths
+		let result = new Pipeline(targetPath, outputPath);
+		Object.assign(result.parserOptions, this.parserOptions);
+		result._transforms.push(...this._transforms);
+		result._allItems = this._allItems;
+		result._files = this._files;
 
-    /** The relative source path of this item (excluding .md extension) */
-    readonly path: string;
+		// add function to wait for pipeline to complete
+		this._run.push(this._startP.then(() => result.run()));
+		return result;
+	}
 
-    /** Markdown source (lines) */
-    readonly markdown: string[];
+	/** Starts processing all items, and returns a promise that is resolved when done */
+	async run() {
+		if (this._running) return;
+		this._running = true;
+		this._resolveStart();
+		let len = 0;
+		while (this._run.length > len) {
+			len = this._run.length;
+			await Promise.all(this._run);
+		}
+	}
 
-    /**
-     * Data object associated with this item; includes YAML front matter from the markdown source file, and may contain special properties:
-     * - `output`: the intended output path for this item (as a string, including file extension)
-     * - `warnings`: any warnings that will be shown after the pipeline has finished (an array of strings)
-     */
-    data: any = {};
+	/** Runs all transform functions for given item */
+	private async _transform(item: PipelineItem) {
+		let funcs: PipelineTransform[] = [...this._transforms];
+		let next = () =>
+			funcs.length
+				? funcs.shift()!.call(undefined, item, next)
+				: this._handleItemAsync(item);
+		await next();
 
-    /** List of assets that should be copied on disk along with this item */
-    readonly assets: PipelineAsset[] = [];
+		// after transforms, handle HTML replacement tags
+		if (item.output && item.output.text) {
+			await item.replaceOutputTagsAsync({
+				"html-import": (attr) => {
+					return this.readTextFileAsync(this._relPath(item, attr.src));
+				},
+				"html-insert": (attr) =>
+					attr["raw"]
+						? item.data[attr.prop] || attr.default || ""
+						: this.escapeHtml(item.data[attr.prop] || attr.default || ""),
+			});
+			item.output = {
+				...item.output,
+				text: replaceHtmlAttrTags(item.output.text),
+			};
+		}
+	}
 
-    /** Output file(s) that should be written to disk, if any */
-    readonly output: PipelineOutput[] = [];
-  }
+	/** Parses markdown text for given pipeline item and prepares HTML output (core pipeline function) */
+	private async _handleItemAsync(item: PipelineItem) {
+		if (item.data.inactive) return;
+
+		// handle 'require' property as a list of markdown files
+		if (item.data.require) {
+			let files: string[] = Array.isArray(item.data.require)
+				? item.data.require
+				: [item.data.require];
+			this.addFile(...files.map((s) => this._relPath(item, s)));
+		}
+
+		// handle 'assets' property as a list of asset filenames
+		if (Array.isArray(item.data.assets)) {
+			for (let asset of item.data.assets) {
+				if (typeof asset === "string") {
+					let relAsset = this._relPath(item, asset);
+					let input = path.join(this.path, relAsset);
+					let output = path.join(this.outputPath, relAsset);
+					item.assets.push({ input, output });
+				} else if (asset.input && asset.output) {
+					item.assets.push(asset);
+				} else {
+					throw Error("Invalid asset referenced from " + item.path);
+				}
+			}
+		}
+
+		// handle import and insert tags
+		await item.replaceSourceTagsAsync({
+			import: async (attr) => {
+				let srcPath = this._relPath(item, attr.src);
+				let text = await this.readTextFileAsync(srcPath);
+				let imported = this.addSource(
+					path.join(this.path, srcPath + "__import#" + _nextImportId++),
+					text,
+					{ partial: true }
+				);
+				await imported.waitAsync();
+				return imported.source.join("\n");
+			},
+			insert: (attr) => item.data[attr.prop] || attr.default || "",
+		});
+
+		// parse markdown and set output object
+		if (item.source.length) {
+			let fileName = item.data.partial
+				? undefined
+				: item.data.output
+				? path.join(this.outputPath, item.data.output)
+				: path.join(this.outputPath, path.relative(this.path, item.path)) +
+				  ".html";
+
+			let text = await this.parseAsync(item.source);
+			item.output = { path: fileName, text };
+		}
+	}
+
+	/** Given a pipeline item and a path relative to the item path, returns a path relative to the current pipeline path */
+	private _relPath(item: PipelineItem, src: string) {
+		let relDir = path.relative(this.path, path.dirname(item.path));
+		return path.join(relDir, src);
+	}
+
+	private _running?: boolean;
+	private _resolveStart!: () => void;
+	private _startP = new Promise<void>((r) => {
+		this._resolveStart = r;
+	});
+
+	private _transforms: Array<PipelineTransform> = [];
+	private _items: PipelineItem[] = [];
+	private _allItems = new Map<string, PipelineItem>();
+	private _run: Array<Promise<void>> = [];
+	private _files: FileCache;
 }

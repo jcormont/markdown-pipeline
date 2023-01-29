@@ -1,0 +1,11 @@
+blockquote.special_block {
+	background-color: yellowgreen;
+}
+
+ul.special_list {
+	list-style-type: none;
+}
+
+ul.special_list li {
+	padding: 1em 0;
+}
