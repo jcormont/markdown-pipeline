@@ -37,7 +37,7 @@ if (!destPath || !process.argv[3]) {
 			// add warnings
 			if (Array.isArray(item.data.warnings)) {
 				warnings.push(
-					item.data.warnings.map(
+					...item.data.warnings.map(
 						(s: any) => "Warning (" + item.path + "): " + s
 					)
 				);
