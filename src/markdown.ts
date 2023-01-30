@@ -111,7 +111,7 @@ export function parseCommentTagProps(tag: string): [string, any] {
 	tag = tag.slice(6, -5).replace(/^\s*\S+/, ""); // remove tag name
 
 	// match all attributes within the tag using a RegExp
-	let re = /([^\s\"\=]+)(?:\s*\=\s*(?:([^\s\"]+)|\"([^\"]+)\"))?/g;
+	let re = /([^\s\"\=]+)(?:\s*\=\s*(?:([^\s\"]+)|\"([^\"]*)\"))?/g;
 	let match: RegExpMatchArray | null;
 	let props: any = Object.create(null);
 	while ((match = re.exec(tag))) {
