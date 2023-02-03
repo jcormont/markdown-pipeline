@@ -2,7 +2,9 @@ import * as path from "path";
 import { FileCache } from "./FileCache";
 import { Pipeline } from "./Pipeline";
 
+// export classes from main module
 export * from "./Pipeline";
+export * from "./PipelineItem";
 
 // check output path and module name(s)
 const destPath = process.argv[2];
