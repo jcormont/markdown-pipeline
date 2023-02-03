@@ -42,7 +42,7 @@ Transform functions are useful for adding generated content or wrapping the resu
 To add items (markdown files, asset files, other content) to the pipeline, use the following methods _after_ adding transform functions:
 
 - `addFile(...fileNames: string[]): Pipeline` — adds one or more Markdown files to the pipeline.
-- `addSource(id: string, markdown: string | string[], data?: any, assets?: PipelineAsset[]): PipelineItem` — adds in-memory markdown text to the pipeline
+- `addSource(id: string, markdown: string | string[], data?: any, assets?: PipelineAsset[], init?: () => Promise<void>): PipelineItem` — adds in-memory markdown text to the pipeline
 - `addAsset(...assets: { input: string, output: string }[]): Pipeline` — adds one or more asset files to the pipeline, that will be copied to the destination directory in their entirety.
 
 ```js
@@ -154,7 +154,7 @@ This is a paragraph with a special CSS class name.
 
 'Front matter' at the start of a Markdown file is parsed as YAML, and properties are added to the `data` property of the pipeline item. Some of these are handled by the pipeline itself.
 
-- `require` — A file name or list of file names that will be added to the pipeline immediately
+- `require` — A file name or list of file names that will be added to the pipeline immediately (after adding a file/source)
 - `assets` — A list of file names or objects with input/output properties that are added as assets for this pipeline item
 - `output` — The (relative) output path, including extension
 - `inactive` — If true, no HTML output will be generated, and assets will not be copied

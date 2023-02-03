@@ -42,7 +42,18 @@ exports.start = (pipeline) => {
 	pipeline.addTransform(sampleTag, useTemplate);
 
 	// add a pipeline item from a string rather than a file
-	pipeline.addSource("virtual/sample", "This is sample _in-memory_ content");
+	let virtualItem = pipeline.addSource(
+		"virtual/sample",
+		"This is sample _in-memory_ content",
+		undefined,
+		undefined,
+		async () => {
+			await new Promise((r) => setTimeout(r, 100));
+			virtualItem.source.push(
+				"that is <!--{{sample-tag content=added}}--> asynchronously"
+			);
+		}
+	);
 
 	// add more content in content/pipeline.js
 	pipeline.spawn("content", ".").addModule("pipeline.js");

@@ -129,7 +129,7 @@ export class Pipeline {
 	 * Reads one or more markdown files and adds them to this pipeline (synchronously)
 	 *
 	 * Markdown files may include YAML front matter, which is used to set the `data` property of the pipeline item. The following properties are handled by the pipeline itself:
-	 * - `require` -- A file name (relative to the file itself) or list of file names that will be added to the pipeline
+	 * - `require` -- A file name (relative to the file itself) or list of file names that will be added to the pipeline immediately
 	 * - `assets` -- A list of file names (relative to the file itself) or objects with input/output properties (relative to the *root* pipeline path) that are added as assets for this pipeline item
 	 * - `output` -- The output file name (relative to the current pipeline output path), including extension; if not set, the output path is based on the original item path, with HTML extension
 	 * - `inactive` -- If true, no HTML output will be generated, and assets will not be copied
@@ -160,13 +160,15 @@ export class Pipeline {
 	 * @param text Markdown text, may include YAML front matter
 	 * @param itemData Pipeline item data, overrides properties from front matter
 	 * @param assets List of assets that should be included in the output on behalf of this item
+	 * @param init An (async) function that is awaited _before_ pipeline transforms are run on this pipeline item
 	 * @returns The newly added pipeline item
 	 */
 	addSource(
 		id: string,
 		text: string,
 		itemData: any = {},
-		assets: PipelineAsset[] = []
+		assets: PipelineAsset[] = [],
+		init?: () => void | Promise<void>
 	) {
 		let itemPath = path.join(this.path, id);
 		if (this._allItems.has(itemPath)) {
@@ -180,18 +182,24 @@ export class Pipeline {
 		data = { ...itemData, ...data };
 
 		// add pipeline item
-		let promise: Promise<void> = this._startP.then(() => this._transform(item));
-		let item = new PipelineItem(
-			this,
-			itemPath,
-			markdown,
-			data,
-			assets,
-			promise
-		);
+		let item: PipelineItem;
+		let promise = (async () => {
+			await this._startP;
+			if (init) await init();
+			await this._transform(item!);
+		})();
+		item = new PipelineItem(this, itemPath, markdown, data, assets, promise);
 		this._items.push(item);
 		this._allItems.set(item.path, item);
 		this._run.push(promise);
+
+		// handle 'require' property as a list of markdown files
+		if (data.require) {
+			let files: string[] = Array.isArray(data.require)
+				? data.require
+				: [data.require];
+			this.addFile(...files.map((s) => this._relPath(item, s)));
+		}
 		return item;
 	}
 
@@ -224,9 +232,14 @@ export class Pipeline {
 	 * Creates a new pipeline, optionally using new path(s). The spawned pipeline inherits all current transforms, but not those that are added *after* calling this method.
 	 * @param relativePath Input path, relative to the current pipeline path; if omitted, the new path will be the same as the current path
 	 * @param outputPath Output path, relative to the current output path; if omitted, `relativePath` is used, or if both are omitted, the new output path will be the same as the current output path
+	 * @param init An (async) function that is awaited _before_ pipeline transforms are run on this pipeline
 	 * @returns The newly created pipeline
 	 */
-	spawn(relativePath?: string, outputPath?: string) {
+	spawn(
+		relativePath?: string,
+		outputPath?: string,
+		init?: () => void | Promise<void>
+	) {
 		let targetPath = relativePath
 			? path.join(this.path, relativePath)
 			: this.path;
@@ -240,7 +253,13 @@ export class Pipeline {
 		result._files = this._files;
 
 		// add function to wait for pipeline to complete
-		this._run.push(this._startP.then(() => result.run()));
+		this._run.push(
+			(async () => {
+				await this._startP;
+				if (init) await init();
+				await result.run();
+			})()
+		);
 		return result;
 	}
 
@@ -286,14 +305,6 @@ export class Pipeline {
 	/** Parses markdown text for given pipeline item and prepares HTML output (core pipeline function) */
 	private async _handleItemAsync(item: PipelineItem) {
 		if (item.data.inactive) return;
-
-		// handle 'require' property as a list of markdown files
-		if (item.data.require) {
-			let files: string[] = Array.isArray(item.data.require)
-				? item.data.require
-				: [item.data.require];
-			this.addFile(...files.map((s) => this._relPath(item, s)));
-		}
 
 		// handle 'assets' property as a list of asset filenames
 		if (Array.isArray(item.data.assets)) {
