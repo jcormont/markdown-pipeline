@@ -42,7 +42,7 @@ Transform functions are useful for adding generated content or wrapping the resu
 To add items (markdown files, asset files, other content) to the pipeline, use the following methods _after_ adding transform functions:
 
 - `addFile(...fileNames: string[]): Pipeline` — adds one or more Markdown files to the pipeline.
-- `addSource(id: string, markdown: string | string[], data?: any, assets?: PipelineAsset[], init?: () => Promise<void>): PipelineItem` — adds in-memory markdown text to the pipeline
+- `addSource(id: string, markdown: string | string[], data?: any, assets?: PipelineAsset[], init?: (item) => Promise<void>): PipelineItem` — adds in-memory markdown text to the pipeline
 - `addAsset(...assets: { input: string, output: string }[]): Pipeline` — adds one or more asset files to the pipeline, that will be copied to the destination directory in their entirety.
 
 ```js
@@ -56,7 +56,7 @@ exports.start = (pipeline) => {
 
 Each pipeline has its own (relative) source path and destination path. To make things easier, you can 'spawn' a separate pipeline that has its own paths. The new pipeline will inherit the current set of transform functions from the current pipeline, but not functions that are added afterwards.
 
-- `spawn(path: string, outputPath: string): Pipeline` — creates a new pipeline for the given paths, relative to the current input and output paths. The input and output paths are used when loading source and asset files, and determining their destination path.
+- `spawn(path: string, outputPath: string, init: (pipeline) => void | Promise<void>): Pipeline` — creates a new pipeline for the given paths, relative to the current input and output paths. The input and output paths are used when loading source and asset files, and determining their destination path.
 
 ```js
 exports.start = (pipeline) => {

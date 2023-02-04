@@ -168,7 +168,7 @@ export class Pipeline {
 		text: string,
 		itemData: any = {},
 		assets: PipelineAsset[] = [],
-		init?: () => void | Promise<void>
+		init?: (item: PipelineItem) => void | Promise<void>
 	) {
 		let itemPath = path.join(this.path, id);
 		if (this._allItems.has(itemPath)) {
@@ -185,7 +185,7 @@ export class Pipeline {
 		let item: PipelineItem;
 		let promise = (async () => {
 			await this._startP;
-			if (init) await init();
+			if (init) await init(item!);
 			await this._transform(item!);
 		})();
 		item = new PipelineItem(this, itemPath, markdown, data, assets, promise);
@@ -238,7 +238,7 @@ export class Pipeline {
 	spawn(
 		relativePath?: string,
 		outputPath?: string,
-		init?: () => void | Promise<void>
+		init?: (pipeline: Pipeline) => void | Promise<void>
 	) {
 		let targetPath = relativePath
 			? path.join(this.path, relativePath)
@@ -256,7 +256,7 @@ export class Pipeline {
 		this._run.push(
 			(async () => {
 				await this._startP;
-				if (init) await init();
+				if (init) await init(result);
 				await result.run();
 			})()
 		);
