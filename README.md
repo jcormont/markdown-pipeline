@@ -128,9 +128,17 @@ Refer to typings in [`dist/PipelineItem.d.ts`](./dist/PipelineItem.d.ts) for mor
 
 ## Markdown syntax and tags
 
-This package uses [Marked](https://marked.js.org) to transform Markdown to HTML, and [highlight.js](https://highlightjs.org) to add syntax highlighting. 'Comment tags' are used for some additional functionality.
+This package uses [Marked](https://marked.js.org) to transform Markdown to HTML, and [highlight.js](https://highlightjs.org) to add syntax highlighting.
 
-Two types of comment tags are replaced immediately _before_ parsing the markdown source text:
+Additionally, heading IDs may be specified using `{#...}` at the end of the heading line. For example:
+
+```md
+## This is a heading {#this-heading}
+
+This allows for cross-referencing using [links](#this-heading).
+```
+
+Markdown Pipeline introduces 'comment tags' as a way to add markup within Markdown text. Two types of comment tags are replaced immediately _before_ parsing the markdown source text:
 
 - `<!--{{import src="..."}}-->` — import markdown text from a file (with given path, relative to the current file). The markdown text passes through the pipeline before being inserted.
 - `<!--{{insert prop="..." default="..."}}>` — insert markdown text from a data property (YAML front matter), optionally insert given default text if the property is undefined or a blank string.

@@ -72,8 +72,21 @@ export async function parseMarkdownAsync(
 		};
 	}
 
-	// disable header IDs by default, since we can use comment tags
+	// disable header IDs by default, since we use our own
 	if (options.headerIds == null) options.headerIds = false;
+
+	// parse heading IDs first, replace with HTML equivalent
+	if (Array.isArray(text)) {
+		text = text.map((line) =>
+			line.replace(
+				/^(\#+)[ \t]+(.*)\{\#([^\}\s]+)\}\s*$/,
+				(_s, h, t, id) =>
+					`<h${h.length} id="${id}">` +
+					marked.parseInline(t.trim(), options) +
+					`</h${h.length}>`
+			)
+		);
+	}
 
 	// use `marked` with given options, and parse comment tags
 	let result = !Array.isArray(text)

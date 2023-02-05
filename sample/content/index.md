@@ -10,7 +10,7 @@ assets:
     output: "assets/out_test2.txt"
 ---
 
-# Sample *file*
+# Sample *file* {#top}
 
 This is a sample markdown file.
 
@@ -21,7 +21,7 @@ It's easy to use YAML in the pipeline and replace <!--{{sample-tag content="tag 
 <!--{{import src="dir/partial.md" }}-->
 
 <!--{{html-attr id=markdown class=special_title}}-->
-## Markdown
+## Markdown {#markdown}
 
 Standard markdown syntax is supported, along with `<!--{{html-attr comment tags}}-->` that add properties to block and inline elements such as headings, lists, and <!--{{html-attr class=special_link target=_blank}}-->[links](dir/link.html) like <!--{{html-attr style="color: red"}}-->[this](#).
 
@@ -38,7 +38,7 @@ Here is a special list:
 - One
 - Two
 
-### Code
+### Code {#code}
 
 Syntax highlighting is performed by default, using the `highlight.js` package. You'll just need to add the `highlight.js` script and style sheet.
 
