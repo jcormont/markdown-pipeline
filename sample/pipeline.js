@@ -6,10 +6,7 @@ exports.start = (pipeline) => {
 		},
 	};
 
-	async function useTemplate(item, next) {
-		// wait for markdown to be parsed to HTML
-		await next();
-
+	async function useTemplate(item) {
 		// try to match template
 		let template = templates[item.data.template];
 		if (template) {
@@ -23,11 +20,11 @@ exports.start = (pipeline) => {
 			});
 
 			// add assets for this template as well
-			pipeline.addAsset(...template.assets);
+			pipeline.addAssets(...template.assets);
 		}
 	}
 
-	async function sampleTag(item, next) {
+	async function sampleTag(item) {
 		await item.replaceSourceTagsAsync({
 			"sample-tag"(attr) {
 				// return 'content' attribute in italics
@@ -35,11 +32,11 @@ exports.start = (pipeline) => {
 				return "*" + content + "*";
 			},
 		});
-		return next();
 	}
 
 	// add transform functions
-	pipeline.addTransform(sampleTag, useTemplate);
+	pipeline.addSourceTransform(sampleTag);
+	pipeline.addOutputTransform(useTemplate);
 
 	// add a pipeline item from a string rather than a file
 	let virtualItem = pipeline.addSource(
@@ -55,6 +52,12 @@ exports.start = (pipeline) => {
 		}
 	);
 
-	// add more content in content/pipeline.js
-	pipeline.spawn("content", ".").addModule("pipeline.js");
+	// add more content from other modules
+	pipeline.spawn("content", ".", async (contentPipeline) => {
+		let content = await import("./content/pipeline.js");
+		content.start(contentPipeline);
+
+		let sync = await import("./content/sync/pipeline.js");
+		sync.start(contentPipeline);
+	});
 };

@@ -9,19 +9,31 @@ import { FileCache } from "./FileCache";
 import { PipelineAsset, PipelineItem } from "./PipelineItem";
 import { decode, encode } from "html-entities";
 
-let _nextAssetId = 1;
+let _nextAnonId = 1;
 let _nextImportId = 1;
 
 /** Type definition for a pipeline transform function */
-export type PipelineTransform = (
-	item: PipelineItem,
-	next: () => Promise<void>
-) => void | Promise<void>;
+export type PipelineTransform = (item: PipelineItem) => void | Promise<void>;
 
 /**
  * A representation of a Markdown processing pipeline, which processes markdown files and assets using a set of transform functions.
  */
 export class Pipeline {
+	/** Create a main pipeline with builtin transforms, and start running asynchronously after promise from async init callback resolves */
+	static main(init: (pipeline: Pipeline) => Promise<void>) {
+		let pipeline = new Pipeline("", "");
+		pipeline.addResolveTransform(
+			pipeline._builtinResolveTransform.bind(pipeline)
+		);
+		pipeline.addOutputResolveTransform(
+			pipeline._builtinOutputResolveTransform.bind(pipeline)
+		);
+		Promise.resolve(pipeline)
+			.then(init)
+			.then(() => pipeline._resolveStart());
+		return pipeline;
+	}
+
 	/**
 	 * Creates a new pipeline.
 	 * @note Do NOT use this constructor directly, use `spawn()` instead.
@@ -38,8 +50,10 @@ export class Pipeline {
 	/** The output path, relative to the destination base directory */
 	readonly outputPath: string;
 
-	/** Parser options that are used when converting markdown to HTML */
-	readonly parserOptions: ParserOptions = {};
+	/** Set parser options that are used when converting markdown to HTML */
+	setParserOptions(options: ParserOptions) {
+		this._parserOptions = options;
+	}
 
 	/**
 	 * Returns a list of all items that have been added to this pipeline **only**.
@@ -71,7 +85,7 @@ export class Pipeline {
 	 * @returns A promise for the HTML output string
 	 */
 	async parseAsync(markdown: string | string[]) {
-		return await parseMarkdownAsync(markdown, this.parserOptions);
+		return await parseMarkdownAsync(markdown, this._parserOptions);
 	}
 
 	/** A helper method that returns HTML-escaped text. */
@@ -93,52 +107,59 @@ export class Pipeline {
 	}
 
 	/**
-	 * Loads given JS module(s) and runs their exported 'start' function. The current pipeline is supplied as the function's only argument.
-	 * @param fileNames File names of one or more JavaScript source files to run, relative to the current pipeline path
+	 * Adds a source-stage transform function to this pipeline (and all pipelines spawned from this pipeline afterwards).
+	 * @param transform The transform function to add
 	 * @returns The pipeline itself
 	 */
-	addModule(...fileNames: string[]) {
-		for (let fileName of fileNames) {
-			try {
-				let start = require(path.resolve(this.path, fileName)).start;
-				if (!(typeof start === "function")) {
-					throw Error("Module should export function start(pipeline) { ... }");
-				}
-				start(this);
-			} catch (err) {
-				throw Error(
-					"In pipeline module " + path.join(this.path, fileName) + ":\n" + err
-				);
-			}
-		}
+	addSourceTransform(transform: PipelineTransform) {
+		this._sourceTransforms.push(transform);
 		return this;
 	}
 
 	/**
-	 * Adds transform function(s) to this pipeline (and all pipelines spawned from this pipeline afterwards).
-	 * @note The transform function only takes effect for items added _after_ this call.
-	 * @param transforms One or more transform functions
+	 * Adds a resolve-stage transform function to this pipeline (and all pipelines spawned from this pipeline afterwards).
+	 * @param transform The transform function to add
 	 * @returns The pipeline itself
 	 */
-	addTransform(...transforms: Array<PipelineTransform>) {
-		this._transforms.push(...transforms);
+	addResolveTransform(transform: PipelineTransform) {
+		this._resolveTransforms.push(transform);
 		return this;
 	}
 
 	/**
-	 * Reads one or more markdown files and adds them to this pipeline (synchronously)
+	 * Adds an output-stage transform function to this pipeline (and all pipelines spawned from this pipeline afterwards).
+	 * @param transform The transform function to add
+	 * @returns The pipeline itself
+	 */
+	addOutputTransform(transform: PipelineTransform) {
+		this._outputTransforms.push(transform);
+		return this;
+	}
+
+	/**
+	 * Adds an output resolve-stage transform function to this pipeline (and all pipelines spawned from this pipeline afterwards).
+	 * @param transform The transform function to add
+	 * @returns The pipeline itself
+	 */
+	addOutputResolveTransform(transform: PipelineTransform) {
+		this._outputResolveTransforms.push(transform);
+		return this;
+	}
+
+	/**
+	 * Reads one or more markdown files and adds them to this pipeline (asynchronously)
 	 *
 	 * Markdown files may include YAML front matter, which is used to set the `data` property of the pipeline item. The following properties are handled by the pipeline itself:
 	 * - `require` -- A file name (relative to the file itself) or list of file names that will be added to the pipeline immediately
-	 * - `assets` -- A list of file names (relative to the file itself) or objects with input/output properties (relative to the *root* pipeline path) that are added as assets for this pipeline item
-	 * - `output` -- The output file name (relative to the current pipeline output path), including extension; if not set, the output path is based on the original item path, with HTML extension
-	 * - `inactive` -- If true, no HTML output will be generated, and assets will not be copied
-	 * - `partial` -- If true, HTML output will still be generated, but not saved (output path is cleared)
+	 * - `assets` -- A list of file names (relative to the file itself) or objects with input/output properties (relative to the *root* pipeline path) that are added as assets for this pipeline item during the resolve stage
+	 * - `output` -- The output file name (relative to the current pipeline output path), including extension; if not set before the output stage, the output path is based on the original item path, with HTML extension
+	 * - `inactive` -- If true, no further transform functions will be run and output/assets will not be saved
+	 * - `partial` -- If true, source will be transformed and assets will be copied but HTML output will not be generated
 	 * - `warnings` -- A list of warnings (strings) that will be shown after the pipeline has finished
 	 * @param fileNames One or more file names, relative to the pipeline path
 	 * @returns The pipeline itself
 	 */
-	addFile(...fileNames: string[]) {
+	addFiles(...fileNames: string[]) {
 		for (let fileName of fileNames) {
 			let filePath = path.resolve(this.path, fileName);
 			fileName = fileName.replace(/\.md$|\.txt$/, "");
@@ -146,9 +167,38 @@ export class Pipeline {
 			// if not added yet, read file and add item
 			let id = path.join(this.path, fileName);
 			if (this._allItems.has(id)) continue;
-			let text = this._files.readTextFile(filePath);
-			this.addSource(fileName, text);
+			this._promises.push(
+				(async () => {
+					let text = await this._files.readTextFileAsync(filePath);
+					this.addSource(fileName, text);
+				})()
+			);
 		}
+		return this;
+	}
+
+	/**
+	 * Add one or more assets to this pipeline, by themselves.
+	 * @param assets List of assets to be added, either as strings (relative to the current pipeline path) or objects with input/output properties (relative to the *root* pipeline path)
+	 * @returns The pipeline itself
+	 */
+	addAssets(...assets: Array<string | PipelineAsset>) {
+		let item = new PipelineItem(
+			this,
+			"@asset:" + _nextAnonId++,
+			undefined,
+			undefined,
+			assets.map((a) =>
+				typeof a === "string"
+					? {
+							input: path.join(this.path, a),
+							output: path.join(this.outputPath, a),
+					  }
+					: a
+			)
+		);
+		this._items.push(item);
+		this._allItems.set(item.path, item);
 		return this;
 	}
 
@@ -191,41 +241,35 @@ export class Pipeline {
 		item = new PipelineItem(this, itemPath, markdown, data, assets, promise);
 		this._items.push(item);
 		this._allItems.set(item.path, item);
-		this._run.push(promise);
+		this._promises.push(promise);
 
 		// handle 'require' property as a list of markdown files
 		if (data.require) {
 			let files: string[] = Array.isArray(data.require)
 				? data.require
 				: [data.require];
-			this.addFile(...files.map((s) => this._relPath(item, s)));
+			this.addFiles(...files.map((s) => this._relPath(item, s)));
 		}
 		return item;
 	}
 
 	/**
-	 * Add one or more assets to this pipeline, by themselves.
-	 * @param assets List of assets to be added, either as strings (relative to the current pipeline path) or objects with input/output properties (relative to the *root* pipeline path)
+	 * Add an output (text) file from a string. The resulting item is NOT processed by any pipeline functions.
+	 * @param filePath The output file name or path, relative to the current output path
+	 * @param text The text to write to the output file
 	 * @returns The pipeline itself
 	 */
-	addAsset(...assets: (string | PipelineAsset)[]) {
+	addOutputFile(filePath: string, text: string, data = {}) {
 		let item = new PipelineItem(
 			this,
-			"@asset:" + _nextAssetId++,
+			"@file:" + _nextAnonId++,
 			undefined,
-			undefined,
-			assets.map((a) =>
-				typeof a === "string"
-					? {
-							input: path.join(this.path, a),
-							output: path.join(this.outputPath, a),
-					  }
-					: a
-			)
+			data
 		);
+		item.output = { path: path.join(this.outputPath, filePath), text };
 		this._items.push(item);
 		this._allItems.set(item.path, item);
-		return this;
+		return item;
 	}
 
 	/**
@@ -247,48 +291,108 @@ export class Pipeline {
 
 		// create new pipeline with given paths
 		let result = new Pipeline(targetPath, outputPath);
-		Object.assign(result.parserOptions, this.parserOptions);
-		result._transforms.push(...this._transforms);
+		Object.assign(result._parserOptions, this._parserOptions);
+		result._sourceTransforms.push(...this._sourceTransforms);
+		result._resolveTransforms.push(...this._resolveTransforms);
+		result._outputTransforms.push(...this._outputTransforms);
+		result._outputResolveTransforms.push(...this._outputResolveTransforms);
 		result._allItems = this._allItems;
 		result._files = this._files;
 
-		// add function to wait for pipeline to complete
-		this._run.push(
+		// wait for pipeline to complete
+		this._promises.push(
 			(async () => {
 				await this._startP;
 				if (init) await init(result);
-				await result.run();
+				result._resolveStart();
+				await result.waitAsync();
 			})()
 		);
 		return result;
 	}
 
-	/** Starts processing all items, and returns a promise that is resolved when done */
-	async run() {
-		if (this._running) return;
-		this._running = true;
-		this._resolveStart();
+	/** Returns a promise that is fulfilled when all pipeline items have been processed. The promise is rejected if an error occurs. */
+	async waitAsync() {
+		await this._startP;
 		let len = 0;
-		while (this._run.length > len) {
-			len = this._run.length;
-			await Promise.all(this._run);
+		while (this._promises.length > len) {
+			len = this._promises.length;
+			await Promise.all(this._promises);
 		}
 	}
 
 	/** Runs all transform functions for given item */
 	private async _transform(item: PipelineItem) {
-		let funcs: PipelineTransform[] = [...this._transforms];
-		let next = () =>
-			funcs.length
-				? funcs.shift()!.call(undefined, item, next)
-				: this._handleItemAsync(item);
-		await next();
+		let skip = false;
+		const parseAsync = async () => {
+			if (item.data.partial) skip = true;
+			else if (item.source.length) {
+				item.output = {
+					text: await this.parseAsync(item.source),
+					path: item.data.output
+						? path.join(this.outputPath, item.data.output)
+						: path.join(this.outputPath, path.relative(this.path, item.path)) +
+						  ".html",
+				};
+			}
+		};
 
-		// after transforms, handle HTML replacement tags
+		let funcs: PipelineTransform[] = [
+			...this._sourceTransforms,
+			...this._resolveTransforms,
+			parseAsync,
+			...this._outputTransforms,
+			...this._outputResolveTransforms,
+		];
+		for (let f of funcs) {
+			if (item.data.inactive || skip) return;
+			await f(item);
+		}
+	}
+
+	/** Helper function that is added as a resolve transform function, handles import and insert tags, and adds assets from data */
+	private async _builtinResolveTransform(item: PipelineItem) {
+		let pipeline = item.pipeline;
+		await item.replaceSourceTagsAsync({
+			import: async (attr) => {
+				let srcPath = pipeline._relPath(item, attr.src);
+				let text = await pipeline.readTextFileAsync(srcPath);
+				let imported = pipeline.addSource(
+					path.join(pipeline.path, srcPath + "__import#" + _nextImportId++),
+					text,
+					{ partial: true }
+				);
+				await imported.waitAsync();
+				return imported.source.join("\n");
+			},
+			insert: (attr) => item.data[attr.prop] || attr.default || "",
+		});
+
+		// handle 'assets' property as a list of asset filenames
+		if (Array.isArray(item.data.assets)) {
+			for (let asset of item.data.assets) {
+				if (typeof asset === "string") {
+					let relAsset = pipeline._relPath(item, asset);
+					let input = path.join(pipeline.path, relAsset);
+					let output = path.join(pipeline.outputPath, relAsset);
+					item.assets.push({ input, output });
+				} else if (asset.input && asset.output) {
+					item.assets.push(asset);
+				} else {
+					throw Error("Invalid asset referenced from " + item.path);
+				}
+			}
+		}
+	}
+
+	/** Helper function that is added as an output resolve transform function, handles html-import and html-insert tags */
+	private async _builtinOutputResolveTransform(item: PipelineItem) {
+		let pipeline = item.pipeline;
 		if (item.output && item.output.text) {
+			await new Promise((r) => setTimeout(r, 1000));
 			await item.replaceOutputTagsAsync({
 				"html-import": (attr) => {
-					return this.readTextFileAsync(this._relPath(item, attr.src));
+					return pipeline.readTextFileAsync(pipeline._relPath(item, attr.src));
 				},
 				"html-insert": (attr) =>
 					attr["raw"]
@@ -302,71 +406,26 @@ export class Pipeline {
 		}
 	}
 
-	/** Parses markdown text for given pipeline item and prepares HTML output (core pipeline function) */
-	private async _handleItemAsync(item: PipelineItem) {
-		if (item.data.inactive) return;
-
-		// handle 'assets' property as a list of asset filenames
-		if (Array.isArray(item.data.assets)) {
-			for (let asset of item.data.assets) {
-				if (typeof asset === "string") {
-					let relAsset = this._relPath(item, asset);
-					let input = path.join(this.path, relAsset);
-					let output = path.join(this.outputPath, relAsset);
-					item.assets.push({ input, output });
-				} else if (asset.input && asset.output) {
-					item.assets.push(asset);
-				} else {
-					throw Error("Invalid asset referenced from " + item.path);
-				}
-			}
-		}
-
-		// handle import and insert tags
-		await item.replaceSourceTagsAsync({
-			import: async (attr) => {
-				let srcPath = this._relPath(item, attr.src);
-				let text = await this.readTextFileAsync(srcPath);
-				let imported = this.addSource(
-					path.join(this.path, srcPath + "__import#" + _nextImportId++),
-					text,
-					{ partial: true }
-				);
-				await imported.waitAsync();
-				return imported.source.join("\n");
-			},
-			insert: (attr) => item.data[attr.prop] || attr.default || "",
-		});
-
-		// parse markdown and set output object
-		if (item.source.length) {
-			let fileName = item.data.partial
-				? undefined
-				: item.data.output
-				? path.join(this.outputPath, item.data.output)
-				: path.join(this.outputPath, path.relative(this.path, item.path)) +
-				  ".html";
-
-			let text = await this.parseAsync(item.source);
-			item.output = { path: fileName, text };
-		}
-	}
-
 	/** Given a pipeline item and a path relative to the item path, returns a path relative to the current pipeline path */
 	private _relPath(item: PipelineItem, src: string) {
 		let relDir = path.relative(this.path, path.dirname(item.path));
 		return path.join(relDir, src);
 	}
 
-	private _running?: boolean;
 	private _resolveStart!: () => void;
 	private _startP = new Promise<void>((r) => {
 		this._resolveStart = r;
 	});
 
-	private _transforms: Array<PipelineTransform> = [];
+	private _sourceTransforms: Array<PipelineTransform> = [];
+	private _resolveTransforms: Array<PipelineTransform> = [];
+	private _outputTransforms: Array<PipelineTransform> = [];
+	private _outputResolveTransforms: Array<PipelineTransform> = [];
+
+	private _promises: Array<Promise<void>> = [];
 	private _items: PipelineItem[] = [];
 	private _allItems = new Map<string, PipelineItem>();
-	private _run: Array<Promise<void>> = [];
 	private _files: FileCache;
+
+	private _parserOptions: ParserOptions = {};
 }

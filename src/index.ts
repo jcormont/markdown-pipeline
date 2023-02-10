@@ -17,20 +17,20 @@ if (!destPath || !process.argv[3]) {
 
 // run async main function
 (async () => {
-	let files = new FileCache();
-	let pipeline = new Pipeline("", "");
-
 	try {
-		// load given modules and run their `start` function
-		let modules = process.argv.slice(3);
-		pipeline.addModule(...modules);
-
-		// wait for the pipeline to run
-		await pipeline.run();
+		let files = new FileCache();
+		let pipeline = Pipeline.main(async () => {
+			// load given modules and run their `start` function
+			let modules = process.argv.slice(3);
+			for (let modulePath of modules) {
+				let imported = await import(path.resolve(modulePath));
+				imported.start?.(pipeline);
+			}
+		});
+		await pipeline.waitAsync();
 
 		// process all resulting output (text files, assets) and show warnings
 		let warnings: string[] = [];
-		let fileLog: string[] = [];
 		let items = pipeline.getAllItems();
 		let q: Array<Promise<void>> = [];
 		for (let item of items) {
@@ -46,14 +46,13 @@ if (!destPath || !process.argv[3]) {
 			}
 
 			// write output files
-			if (item.output?.path) {
+			if (item.output) {
 				let destFileName = path.join(destPath, item.output.path);
 				if (path.relative(destPath, destFileName).startsWith("..")) {
 					throw Error(
 						"Output path is outside output directory: " + item.output.path
 					);
 				}
-				fileLog.push("Item: " + item.path + " => " + destFileName);
 				let text = item.output.text;
 				q.push(files.writeTextFileAsync(destFileName, item.output.text));
 
@@ -78,19 +77,13 @@ if (!destPath || !process.argv[3]) {
 						"Asset output path is outside output directory: " + asset.output
 					);
 				}
-				q.push(
-					(async () => {
-						let copied = await files.copyFileAsync(asset.input, destFileName);
-						if (copied)
-							fileLog.push("Asset: " + asset.input + " => " + destFileName);
-					})()
-				);
+				q.push(files.copyFileAsync(asset.input, destFileName));
 			}
 		}
 
 		// run file operations and display summary
+		if (!q.length) console.log("Warning: No output generated!");
 		await Promise.all(q);
-		console.log(fileLog.join("\n") || "Warning: No output generated!");
 		console.log(warnings.join("\n") || "Completed successfully.");
 	} catch (err) {
 		console.error("Markdown pipeline failed.");

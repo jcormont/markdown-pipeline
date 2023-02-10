@@ -17,7 +17,7 @@ export interface PipelineAsset {
  */
 export interface PipelineOutput {
 	/** The output file path, relative to the destination base path */
-	readonly path?: string;
+	readonly path: string;
 
 	/** Output text to be written to the file */
 	readonly text: string;
@@ -40,7 +40,7 @@ export class PipelineItem {
 		this.pipeline = pipeline;
 		this.path = path;
 		this.source = markdown;
-		this._promise = promise;
+		this._transformPromise = promise;
 		if (data) Object.assign(this.data, data);
 		if (assets) this.assets.push(...assets);
 	}
@@ -67,13 +67,13 @@ export class PipelineItem {
 	 * Returns a promise that is resolved when all transform functions have finished for this pipeline item.
 	 */
 	async waitAsync() {
-		await this._promise;
+		await this._transformPromise;
 		return this;
 	}
 
 	/**
 	 * Replaces special tags inside comments (e.g. `<!--{{tag attr="value"}}-->`) in the source text. Tags are replaced with return values of the corresponding callback function (based on the tag name, which is matched with properties of the object parameter).
-	 * @note This method must be awaited, and must be called _before_ `await next()` in a pipeline transform method for it to have any effect on the generated HTML.
+	 * @note This method must be awaited, and must be called from inside of a source/resolve transform function for it to have any effect on the generated output.
 	 * @param callbacks An object specifying callback functions. Callbacks are called with all attributes of the tag (e.g. `{ attr: "value" }` in the example above; all values are HTML-unescaped strings). Callbacks must return a string or a Promise that resolves to a string.
 	 */
 	async replaceSourceTagsAsync(callbacks: {
@@ -94,7 +94,7 @@ export class PipelineItem {
 
 	/**
 	 * Replaces special tags inside comments (e.g. `<!--{{tag attr="value"}}-->`) in the output text. Tags are replaced with return values of the corresponding callback function (based on the tag name, which is matched with properties of the object parameter).
-	 * @note This method must be awaited, and must be called _after_ `await next()` in a pipeline transform method for it to have any effect.
+	 * @note This method must be awaited, and must be called from inside of an output (or output resolve) transform function for it to have any effect on the generated output.
 	 * @param callbacks An object specifying callback functions. Callbacks are called with all attributes of the tag (e.g. `{ attr: "value" }` in the example above; all values are HTML-unescaped strings). Callbacks must return a string or a Promise that resolves to a string.
 	 */
 	async replaceOutputTagsAsync(callbacks: {
@@ -108,5 +108,5 @@ export class PipelineItem {
 		}
 	}
 
-	private _promise?: Promise<void>;
+	private _transformPromise?: Promise<void>;
 }

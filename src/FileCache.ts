@@ -6,19 +6,6 @@ import * as path from "path";
  */
 export class FileCache {
 	/**
-	 * Reads text from given file (synchronously) and returns it. File contents are cached so subsequent reads return the same result, faster.
-	 * @param fileName The path of the source file
-	 */
-	readTextFile(fileName: string) {
-		let abs = path.resolve(fileName);
-		if (!fs.existsSync(abs)) throw Error("File does not exist: " + fileName);
-		if (this._cache.has(abs)) return this._cache.get(abs)!;
-		let text = String(fs.readFileSync(abs));
-		this._cache.set(abs, text);
-		return text;
-	}
-
-	/**
 	 * Reads text from given file asynchronously, and returns a Promise for its contents. The file contents are cached so subsequent reads return the same Promise.
 	 * @param fileName The path of the source file
 	 */
@@ -62,7 +49,6 @@ export class FileCache {
 	 * Copies a file in binary mode, possibly creating folders along the way
 	 * @param file1 The path of the source file
 	 * @param file2 The path of the destination file
-	 * @returns A promise that resolves to true when this file is copied, false if it already was
 	 */
 	async copyFileAsync(file1: string, file2: string) {
 		file2 = file2.replace(/^\.\//, "");
@@ -71,7 +57,7 @@ export class FileCache {
 
 		// check if already copied/copying
 		if (this._copied.has(file2)) {
-			if (this._copied.get(file2) === file1) return false;
+			if (this._copied.get(file2) === file1) return;
 			throw Error(
 				"Conflicting asset output:\n" +
 					this._copied.get(file2) +
@@ -92,13 +78,13 @@ export class FileCache {
 		}
 
 		// return a promise for readFile then writeFile
-		return new Promise<boolean>((resolve, reject) => {
+		return new Promise<void>((resolve, reject) => {
 			fs.readFile(file1, { encoding: "binary" }, (err, data) => {
 				if (err) reject(err);
 				else {
 					fs.writeFile(file2, data, { encoding: "binary" }, (err) => {
 						if (err) reject(err);
-						else resolve(true);
+						else resolve();
 					});
 				}
 			});
